@@ -107,7 +107,7 @@ contract NFTbase is ERC721, ERC721Enumerable, ERC721Burnable, Ownable {
         emit Transfer(msg.sender, to, tokenId);
     }
     function _baseURI() internal view virtual override returns (string memory) {
-		return 'https://ipfs.moralis.io:2053/ipfs/Qmdk7xhJ6USs2t33UhNmNnW13nTupFJHXXuY9FdZNPKJtN/RWAs';
+		return 'https://ipfs.moralis.io:2053/ipfs/QmcVfVhhPC3m2PxoXbP5FnskWtATzQjgc617cSXF9kT3gD/RWAs';
 	}
 
 	
