@@ -8,13 +8,11 @@ import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Counters.sol";
 
-
 contract Tangilend is IERC721Receiver,Ownable {
     using SafeERC20 for IERC20;
     IERC20 private token;
 
-    struct ListDeposit {
-        
+    struct ListDeposit {    
         address  lender;
         uint256 loanId;
         uint256 loanduration ; 
@@ -24,9 +22,8 @@ contract Tangilend is IERC721Receiver,Ownable {
         uint256 principal ; 
         /// @dev Max is 10,000%, fits in 160 bits
         uint160 interestRate;
-        
-        
     }
+
      // Structure to hold Loan information
     struct Loan {
         address lender ;
@@ -45,30 +42,22 @@ contract Tangilend is IERC721Receiver,Ownable {
     
     mapping(uint256 => Loan) public Loans;
     
-                        
     event LoanStart(uint256 indexed tokenId, address indexed borrower, uint256 LoanEndTime);
     event LoanEnd(uint256 indexed tokenId, address indexed borrower);
-       // Function to start renting the NFT
 
     
-    constructor() {
-    
-        // token = _token;
-    }
+    constructor() {}
     using Counters for Counters.Counter; 
     Counters.Counter private depositCounter;
     Counters.Counter private loanCounter;
 
     function listLoan(IERC721Enumerable nft ,uint256 loanId, uint256 LoanDuration, uint256 collateralId ,address payableCurrency,uint256 principal ,uint160 interestRate  ) external {
-        
         require(nft.ownerOf(collateralId) == msg.sender, "NFTRentingContract: Only NFT owner can list loan");
-        
-
         // Transfer the NFT to the contract
         nft.safeTransferFrom(msg.sender, address(this), collateralId);
 
         // Calculate the Loan end time
-        uint256 LoanEndTime = block.timestamp +LoanDuration*(1 hours);
+        uint256 LoanEndTime = block.timestamp + LoanDuration * (1 days);
          // Store the Loan information
         Loans[loanId] = Loan(
              address(0),
@@ -83,7 +72,6 @@ contract Tangilend is IERC721Receiver,Ownable {
         );
 
     }
-
     function DepositOffer(uint256 loanId,
         uint256 loanduration ,
         address payableCurrency,
@@ -120,7 +108,6 @@ contract Tangilend is IERC721Receiver,Ownable {
         
     }
      function startLoan(  uint256 loanId, uint256 depositId)  public {
-       
         Loan storage loan = Loans[loanId];
         ListDeposit storage depositoffer = listDeposits[loanId][depositId] ;
         address lender = listDeposits[loanId][depositId].lender ;
@@ -161,50 +148,21 @@ contract Tangilend is IERC721Receiver,Ownable {
         return block.timestamp;
     }
      
-    function x() view public  returns (uint) {
-        return msg.sender.balance;
-    }
-    // function time(uint256 loanId) view public returns(uint){
-    //     Loan storage loan = Loans[loanId];
-    //     return loan.LoanEndtime;
-
-    // }
-    /// @dev The units of precision equal to the minimum interest of 1 basis point.
-    uint256 public constant INTEREST_RATE_DENOMINATOR = 1e18;
-    /// @dev The denominator to express the final interest in terms of basis ponits.
-    uint256 public constant BASIS_POINTS_DENOMINATOR = 10_000;
-    // Interest rate parameter
-    uint256 public constant INSTALLMENT_PERIOD_MULTIPLIER = 1_000_000;
-    // 50 / BASIS_POINTS_DENOMINATOR = 0.5%
-    function getFullInterestAmount(uint256 principal, uint256 interestRate) public pure virtual returns (uint256) {
-        // Interest rate to be greater than or equal to 0.01%
-        // if (interestRate / INTEREST_RATE_DENOMINATOR < 1) revert FIAC_InterestRate(interestRate);
-
-        return principal + principal * interestRate / INTEREST_RATE_DENOMINATOR / BASIS_POINTS_DENOMINATOR;
-    }
     function payback(IERC721Enumerable nft, uint256 loanId) external {
         Loan storage loan = Loans[loanId];
         
           // Check if the Loan period has ended
         if (block.timestamp < loan.LoanEndtime) {
-
-            IERC20(Loans[loanId].payableCurrency).transferFrom(msg.sender,loan.lender, loan.principal + loan.principal * loan.LoanEndtime* 365 days * loan.interestRate );
+            IERC20(Loans[loanId].payableCurrency).transferFrom(msg.sender,loan.lender, loan.principal +  ((loan.loanduration/365) *  loan.principal * loan.interestRate / 100));
             // Transfer the asset back to the borrower\
-            nft.safeTransferFrom( address(this),msg.sender, loan.collateralId);
-            
-            
+            nft.safeTransferFrom(address(this),msg.sender, loan.collateralId);
         }
         else{
-            
-        
-            nft.safeTransferFrom( address(this),loan.lender, loan.collateralId);
+            nft.safeTransferFrom(address(this),loan.lender, loan.collateralId);
         }
         
         delete Loans[loanId];
-
         emit LoanEnd(loanId, msg.sender);
-
-
     }
 
     // Function to end the loan and claim money include interest
@@ -215,14 +173,10 @@ contract Tangilend is IERC721Receiver,Ownable {
         require(loan.LoanStartTime > 0, "NFTRentingContract: Loan not started yet");
 
         // Check if the Loan period has ended
-        nft.safeTransferFrom( address(this),msg.sender, loan.collateralId);
+        nft.safeTransferFrom(address(this),msg.sender, loan.collateralId);
         
         delete Loans[loanId];
 
         emit LoanEnd(loanId, msg.sender);
     }
-
-
-    
-    
 }
