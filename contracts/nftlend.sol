@@ -130,7 +130,7 @@ contract Tangilend is IERC721Receiver,Ownable {
         require(IERC20(Loans[loanId].payableCurrency).balanceOf(msg.sender)  >= loan.principal  , "NFTRentingContract: Insufficient deposit");
 
         // Transfer deposit from  contract to lender
-        IERC20(Loans[loanId].payableCurrency).transferFrom( address(this),msg.sender, loan.principal );
+        IERC20(Loans[loanId].payableCurrency).transfer( msg.sender, loan.principal );
 
         
         // Update Loan information
@@ -188,7 +188,7 @@ contract Tangilend is IERC721Receiver,Ownable {
           // Check if the Loan period has ended
         if (block.timestamp < loan.LoanEndtime) {
 
-            IERC20(Loans[loanId].payableCurrency).transfer(loan.lender, loan.principal + loan.principal * loan.LoanEndtime* 365 days * loan.interestRate );
+            IERC20(Loans[loanId].payableCurrency).transferFrom(msg.sender,loan.lender, loan.principal + loan.principal * loan.LoanEndtime* 365 days * loan.interestRate );
             // Transfer the asset back to the borrower\
             nft.safeTransferFrom( address(this),msg.sender, loan.collateralId);
             
