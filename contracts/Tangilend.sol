@@ -153,7 +153,7 @@ contract Tangilend is IERC721Receiver,Ownable {
         
           // Check if the Loan period has ended
         if (block.timestamp < loan.LoanEndtime) {
-            IERC20(Loans[loanId].payableCurrency).transferFrom(msg.sender,loan.lender, loan.principal +  ((loan.loanduration/365) *  loan.principal * loan.interestRate / 100));
+            IERC20(Loans[loanId].payableCurrency).transferFrom(msg.sender,loan.lender, getRepayment(loanId));
             // Transfer the asset back to the borrower\
             nft.safeTransferFrom(address(this),msg.sender, loan.collateralId);
         }
@@ -178,5 +178,11 @@ contract Tangilend is IERC721Receiver,Ownable {
         delete Loans[loanId];
 
         emit LoanEnd(loanId, msg.sender);
+    }
+
+    function getRepayment (uint256 loanID) public view returns (uint256) {
+        Loan storage loan = Loans[loanID];
+        uint256 repayment = loan.principal + (loan.principal*loan.loanduration/365)*loan.interestRate/100;
+        return repayment;
     }
 }
