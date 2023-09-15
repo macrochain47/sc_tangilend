@@ -2,187 +2,194 @@
 pragma solidity ^0.8.9;
 
 import "@openzeppelin/contracts/token/ERC721/IERC721Receiver.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import "@openzeppelin/contracts/token/ERC721/extensions/IERC721Enumerable.sol";
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/utils/Counters.sol";
+import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
+import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
-contract Tangilend is IERC721Receiver,Ownable {
-    using SafeERC20 for IERC20;
-    IERC20 private token;
 
-    struct ListDeposit {    
-        address  lender;
-        uint256 loanId;
-        uint256 loanduration ; 
-        uint256 LoanStartTime ;
-        uint256 LoanEndtime;
-        address payableCurrency;
-        uint256 principal ; 
-        /// @dev Max is 10,000%, fits in 160 bits
-        uint160 interestRate;
+contract Tangilend is IERC721Receiver {
+    enum Status {
+        LISTING,
+        LOAN_DEFAULTED,
+        LOAN_OFFER,
+        REPAIED,
+        FORFEITED
     }
 
-     // Structure to hold Loan information
+    struct Offer {
+        uint256 principal;
+        uint256 apr;
+        uint256 duration;
+        ERC20 currency;
+    }
+
     struct Loan {
-        address lender ;
+        address lender;
         address borrower;
-        uint256 loanduration ; 
-        uint256 LoanStartTime ;
-        uint256 LoanEndtime;
-        uint256 collateralId ;
-        address payableCurrency;
-        uint256 principal ; 
-        /// @dev Max is 10,000%, fits in 160 bits
-        uint160 interestRate;
-        
+        ERC721 collection;
+        uint256 tokenID;
+        Offer defaultTerm;
+        bytes32 acceptedOfferID;
+        uint256 endTime;
+        Status status;
     }
-    mapping(uint256 => mapping (uint256 => ListDeposit)) public listDeposits ;
-    
-    mapping(uint256 => Loan) public Loans;
-    
-    event LoanStart(uint256 indexed tokenId, address indexed borrower, uint256 LoanEndTime);
-    event LoanEnd(uint256 indexed tokenId, address indexed borrower);
 
-    
-    constructor() {}
-    using Counters for Counters.Counter; 
-    Counters.Counter private depositCounter;
-    Counters.Counter private loanCounter;
+    mapping(bytes32 => Loan) public loans;
+    mapping(bytes32 => mapping(bytes32 => Offer)) public offers;
 
-    function listLoan(IERC721Enumerable nft ,uint256 loanId, uint256 LoanDuration, uint256 collateralId ,address payableCurrency,uint256 principal ,uint160 interestRate  ) external {
-        require(nft.ownerOf(collateralId) == msg.sender, "NFTRentingContract: Only NFT owner can list loan");
-        // Transfer the NFT to the contract
-        nft.safeTransferFrom(msg.sender, address(this), collateralId);
+    event LoanCreated(bytes32 indexed loanID, address indexed borrower);
+    event StartedLend(bytes32 indexed loanID, address indexed lender);
+    event StartedBorrow(bytes32 indexed loanID, address indexed lender, bytes32 indexed offerID);
+    event OfferedTerm(bytes32 indexed loanID, bytes32 indexed offerID, address indexed lender);
 
-        // Calculate the Loan end time
-        uint256 LoanEndTime = block.timestamp + LoanDuration * (1 days);
-         // Store the Loan information
-        Loans[loanId] = Loan(
-             address(0),
-             msg.sender ,
-            LoanDuration,
+
+
+    modifier loanExisted (bytes32 id) {
+        require(loans[id].borrower != address(0), "This loan doesn't exists");
+        _;
+    }
+
+    modifier loanIsListing (bytes32 id) {
+        require(loans[id].status == Status.LISTING, "This loan is not listing");
+        _;
+    }
+
+    function createLoan(
+        bytes32 loanID,
+        address collateralAddress,
+        uint256 collateralID,
+        uint256 principal,
+        uint256 apr,
+        uint256 duration,
+        address currency
+    ) external {
+        require(
+            ERC721(collateralAddress).ownerOf(collateralID) == msg.sender,
+            "You do not own this NFT"
+        );
+        require(loans[loanID].borrower == address(0), "Loan already exists");
+
+        loans[loanID] = Loan(
+            address(0),
+            msg.sender,
+            ERC721(collateralAddress),
+            collateralID,
+            Offer( 
+                principal, 
+                apr, 
+                duration, 
+                ERC20(currency)
+            ),
+            bytes32(0),
             0,
-            LoanEndTime ,
-            collateralId ,
-            payableCurrency , 
-             principal , 
-            interestRate
+            Status.LISTING
         );
 
-    }
-    function DepositOffer(uint256 loanId,
-        uint256 loanduration ,
-        address payableCurrency,
-        uint256 principal ,   
-        uint160 interestRate)  public  returns (uint)  {
-        IERC20(Loans[loanId].payableCurrency).safeTransferFrom(msg.sender,address(this), principal) ;
-        uint256 depositId = depositCounter.current();
-        uint256 LoanEndTime = block.timestamp +loanduration*(1 hours);
-        listDeposits[loanId][depositId] = ListDeposit( msg.sender,loanId, loanduration, 0, LoanEndTime ,payableCurrency, principal, interestRate) ;
-        depositCounter.increment();
-        return depositId;
+        loans[loanID].collection.safeTransferFrom(msg.sender, address(this), collateralID);
 
+        emit LoanCreated(loanID, msg.sender);
     }
-    function withdraw( uint256 loanId, uint256 depositId) external{
-        require(listDeposits[loanId][depositId].lender == msg.sender, "Not allowed");
-        IERC20(Loans[loanId].payableCurrency).safeTransferFrom(address(this),msg.sender, Loans[loanId].principal) ;
-        delete listDeposits[loanId][depositId];
+
+    function startLending(bytes32 loanID) external loanExisted(loanID) loanIsListing(loanID) {
+        Loan storage loanData = loans[loanID];
+
+        require(
+            loanData.defaultTerm.currency.transferFrom(
+                msg.sender,
+                loanData.borrower,
+                loanData.tokenID
+            ),
+            "Transfer collateral to borrower failed"
+        );
+        loanData.endTime = block.timestamp + loanData.defaultTerm.duration * (1 days);
+        loanData.lender = msg.sender;
+        loanData.status = Status.LOAN_DEFAULTED;
+        emit StartedLend(loanID, msg.sender);
     }
-    function acceptTerm(  uint256 loanId) external {
-        Loan storage loan = Loans[loanId];
-        address lender = msg.sender ;
-        require(loan.lender == address(0), "Already in loan ");
-        require(loan.LoanEndtime > 0, "NFTRentingContract: NFT is not available for rent");
-        require(loan.LoanEndtime > block.timestamp, "NFTRentingContract: Loan period expired");
-        require(IERC20(Loans[loanId].payableCurrency).balanceOf(msg.sender)  >= loan.principal  , "NFTRentingContract: Insufficient deposit");
 
-        // Transfer money to borrower
-        IERC20(Loans[loanId].payableCurrency).transferFrom(msg.sender, loan.borrower, loan.principal );
-        // Update Loan information
-        loan.lender = lender;
-        loan.LoanStartTime = block.timestamp;
+    function startBorrowing(bytes32 loanID, uint256 offerID) external loanExisted(loanID) loanIsListing(loanID) {
+        Loan storage loanData = loans[loanID];
+        Offer storage offerData = offers[loanID][bytes32(offerID)];
 
-        emit LoanStart(loanId, msg.sender, loan.LoanEndtime);
+        require(loanData.borrower == msg.sender, "You are not the borrower");
+        require(offerData.principal > 0, "Offer does not exist");
+
+        loanData.endTime = block.timestamp + offerData.duration * (1 days);
+        loanData.acceptedOfferID = bytes32(offerID);
+        loanData.lender = msg.sender;
+        loanData.status = Status.LOAN_OFFER;
+
+        require(
+            offerData.currency.transfer(msg.sender, offerData.principal),
+            "Transfer principal to borrower failed"
+        );
+
+        emit StartedBorrow(loanID, msg.sender, bytes32(offerID));
+    }
+
+    function offerLoanTerm(
+        bytes32 loanID, 
+        bytes32 offerID, 
+        uint256 principal, 
+        uint256 apr, 
+        uint256 duration, 
+    address currency) external loanExisted(loanID) loanIsListing(loanID) {
+        Loan storage loanData = loans[loanID];
+
+        offers[loanID][offerID] = Offer(principal, apr, duration, ERC20(currency));
         
+        require(
+            loanData.defaultTerm.currency.transferFrom(
+                msg.sender,
+                loanData.borrower,
+                loanData.tokenID
+            ),
+            "Transfer collateral to borrower failed"
+        );
+
+        emit OfferedTerm(loanID, offerID, msg.sender);
     }
-     function startLoan(  uint256 loanId, uint256 depositId)  public {
-        Loan storage loan = Loans[loanId];
-        ListDeposit storage depositoffer = listDeposits[loanId][depositId] ;
-        address lender = listDeposits[loanId][depositId].lender ;
-        require(loan.lender == address(0), "Already in loan ");
-        require(loan.LoanEndtime > 0, "NFTRentingContract: NFT is not available for rent");
-        require(loan.LoanEndtime > block.timestamp, "NFTRentingContract: Loan period expired");
-        require(IERC20(Loans[loanId].payableCurrency).balanceOf(msg.sender)  >= loan.principal  , "NFTRentingContract: Insufficient deposit");
 
-        // Transfer deposit from  contract to lender
-        IERC20(Loans[loanId].payableCurrency).transfer( msg.sender, loan.principal );
-
+    function repayLoan(bytes32 loanID) external loanExisted(loanID) {
+        Loan storage loanData = loans[loanID];
         
-        // Update Loan information
-        loan.lender = lender;
-        loan.LoanStartTime = block.timestamp;
-        loan.LoanEndtime = depositoffer.LoanEndtime ;
-        loan.loanduration = depositoffer.loanduration;
-        loan.principal = depositoffer.principal ;
-        loan.interestRate = depositoffer.interestRate;
+        require(loanData.status == Status.LOAN_DEFAULTED || loanData.status == Status.LOAN_OFFER, "This loan does not on loan.");
 
-
-        emit LoanStart(loanId, msg.sender, loan.LoanEndtime);
-    }
-    function onERC721Received(
-        address,
-        address,
-        uint256,
-        bytes calldata
-    ) external override pure returns (bytes4) {
-        return
-            bytes4(
-                keccak256("onERC721Received(address,address,uint256,bytes)")
+        if (loanData.status == Status.LOAN_DEFAULTED) {
+            require (
+                loanData.defaultTerm.currency.transferFrom(msg.sender, loanData.lender, getRepayment(loanID)), 
+                "Transfer principal to lender failed"
             );
-    }
-
-   
-    function getCurrentTimestamp() public view returns (uint256) {
-        return block.timestamp;
-    }
-     
-    function payback(IERC721Enumerable nft, uint256 loanId) external {
-        Loan storage loan = Loans[loanId];
-        
-          // Check if the Loan period has ended
-        if (block.timestamp < loan.LoanEndtime) {
-            IERC20(Loans[loanId].payableCurrency).transferFrom(msg.sender,loan.lender, getRepayment(loanId));
-            // Transfer the asset back to the borrower\
-            nft.safeTransferFrom(address(this),msg.sender, loan.collateralId);
+            loanData.collection.safeTransferFrom(address(this), msg.sender, loanData.tokenID);
+        } else {
+            require (
+                offers[loanID][loanData.acceptedOfferID].currency.transferFrom(msg.sender, loanData.lender, getRepayment(loanID)), 
+                "Transfer principal to lender failed"
+            );
+            loanData.collection.safeTransferFrom(address(this), msg.sender, loanData.tokenID);                 
         }
-        else{
-            nft.safeTransferFrom(address(this),loan.lender, loan.collateralId);
+        loanData.status = Status.REPAIED;
+    }
+        
+        
+
+    function onERC721Received(
+        address operator,
+        address from,
+        uint256 tokenId,
+        bytes calldata data
+    ) external override returns (bytes4) {}
+
+
+    function getRepayment(uint256 loanID) internal returns (uint256) {
+        Loan storage loanData = loans[loanID];
+        uint256 repayment = 0;
+        if (loanData.status == Status.LOAN_DEFAULTED) {
+            Offer storage defaultTerm = loanData.defaultTerm;
+            repayment = defaultTerm.principal + defaultTerm.principal * defaultTerm.apr / 100 * defaultTerm.duration / 365;
+        } else {
+            Offer storage acceptedOffer = offers[loanID][loanData.acceptedOfferID];
+            repayment = acceptedOffer.principal + acceptedOffer.principal * acceptedOffer.apr / 100 * acceptedOffer.duration / 365;
         }
-        
-        delete Loans[loanId];
-        emit LoanEnd(loanId, msg.sender);
-    }
-
-    // Function to end the loan and claim money include interest
-    function claimAsset(IERC721Enumerable nft, uint256 loanId) external {
-       
-        Loan storage loan = Loans[loanId];
-        require(loan.lender == msg.sender, "not allowed");
-        require(loan.LoanStartTime > 0, "NFTRentingContract: Loan not started yet");
-
-        // Check if the Loan period has ended
-        nft.safeTransferFrom(address(this),msg.sender, loan.collateralId);
-        
-        delete Loans[loanId];
-
-        emit LoanEnd(loanId, msg.sender);
-    }
-
-    function getRepayment (uint256 loanID) public view returns (uint256) {
-        Loan storage loan = Loans[loanID];
-        uint256 repayment = loan.principal + (loan.principal*loan.loanduration/365)*loan.interestRate/100;
         return repayment;
     }
 }
