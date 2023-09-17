@@ -20,6 +20,7 @@ contract Tangilend is IERC721Receiver {
         uint256 principal;
         uint256 apr;
         uint256 duration;
+        address creator;
         ERC20 currency;
     }
 
@@ -58,8 +59,6 @@ contract Tangilend is IERC721Receiver {
         _;
     }
 
-
-
     function createLoan(
         bytes32 loanID,
         address collateralAddress,
@@ -84,6 +83,7 @@ contract Tangilend is IERC721Receiver {
                 principal, 
                 apr, 
                 duration, 
+                msg.sender,
                 ERC20(currency)
             ),
             bytes32(0),
@@ -123,7 +123,7 @@ contract Tangilend is IERC721Receiver {
 
         loanData.endTime = block.timestamp + offerData.duration * (1 days);
         loanData.acceptedOfferID = bytes32(offerID);
-        loanData.lender = msg.sender;
+        loanData.lender = offerData.creator;
         loanData.status = Status.LOAN_OFFER;
 
         require(
@@ -144,7 +144,7 @@ contract Tangilend is IERC721Receiver {
     ) external loanExisted(loanID) loanIsListing(loanID) {
         require(offers[loanID][offerID].principal == 0, "Offer already exists.");
 
-        offers[loanID][offerID] = Offer(principal, apr, duration, ERC20(currency));
+        offers[loanID][offerID] = Offer(principal, apr, duration, msg.sender, ERC20(currency));
         
         Offer storage newOffer = offers[loanID][offerID];
         require(
@@ -184,7 +184,7 @@ contract Tangilend is IERC721Receiver {
         require(loanData.lender == msg.sender, "You are not the lender");
         require(block.timestamp > loanData.endTime + 3 days, "Loan is not expire");
 
-        loanData.collection.safeTransferFrom(address(this), msg.sender, loanData.tokenID);
+        loanData.collection.safeTransferFrom(address(this), loanData.lender, loanData.tokenID);
         loanData.status = Status.FORFEITED;
     }
         
@@ -209,16 +209,14 @@ contract Tangilend is IERC721Receiver {
         loanData.status = Status.CANCELLED;
     }
 
-    function withdrawOffer(bytes32 loanID, bytes32 offerID) external  loanExisted(loanID) {
-        Loan storage loanData = loans[loanID];
-        Offer storage offerData = offers[loanID][bytes32(offerID)];
+    function withdrawOffer(bytes32 loanID, bytes32 offerID) external loanExisted(loanID) {
+        Offer storage offerData = offers[loanID][offerID];
         
-        require(loanData.borrower == msg.sender, "You are not the borrower");
         require(offerData.principal > 0, "Offer does not exist");
-
+        require(offerData.creator == msg.sender, "You are not the offerer");
         offerData.currency.transfer(msg.sender, offerData.principal);
+        delete offers[loanID][offerID];
     } 
-
 
     function onERC721Received(
         address,
