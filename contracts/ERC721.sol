@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.9;
+pragma solidity ^0.8.19;
 import "@openzeppelin/contracts/token/ERC721/ERC721.sol";
 import "@openzeppelin/contracts/token/ERC721/extensions/ERC721URIStorage.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
@@ -20,8 +20,8 @@ contract RWACollection is ERC721URIStorage {
         amount = 0;
     }
 
-    function adminMintAsset(uint256 val, string calldata uri) external  onlyAdmin {
-        _mint(msg.sender, amount);
+    function adminMintAsset(uint256 val, string calldata uri, address owner) external  onlyAdmin {
+        _mint(owner, amount);
         _setTokenURI(amount, uri);
         valuation[amount] = val;
         amount++;
@@ -42,4 +42,5 @@ contract RWACollection is ERC721URIStorage {
         _setTokenURI(tokenID, uri);
         valuation[tokenID] = val;
     }
+
 }
